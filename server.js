@@ -7,7 +7,19 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 
-app.use(express.static(require('path').join(__dirname, 'public')));
+const path = require('path');
+const fs = require('fs');
+
+app.use(express.static(path.join(__dirname, 'public')));
+
+app.get('/', (req, res) => {
+  const file = path.join(__dirname, 'public', 'index.html');
+  if (fs.existsSync(file)) {
+    res.sendFile(file);
+  } else {
+    res.send('index.html پیدا نشد. فایل‌های موجود: ' + fs.readdirSync(__dirname).join(' , '));
+  }
+});
 
 // roomId -> { game, white, black, resigned }
 const rooms = new Map();
