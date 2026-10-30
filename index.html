@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>شطرنج آنلاین</title>
+<style>
+  :root { --light:#eeeed2; --dark:#769656; --bg:#1f1e1b; --panel:#2b2a27; --fg:#eee; --accent:#81b64c; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font-family:Tahoma,sans-serif;
+         display:flex; flex-direction:column; align-items:center; padding:12px; min-height:100vh; }
+  h1 { font-size:1.3rem; margin:6px 0 10px; }
+  #lobby { width:100%; max-width:420px; text-align:center; background:var(--panel); padding:24px 16px; border-radius:12px; }
+  input, button { font-family:inherit; font-size:1rem; padding:10px 16px; border-radius:8px; border:0; margin:4px; }
+  input { width:70%; text-align:center; background:#3a3935; color:#fff; }
+  button { background:var(--accent); color:#fff; cursor:pointer; font-weight:bold; }
+  button.red { background:#b33; }
+  #game { display:none; width:100%; max-width:520px; }
+  #info { text-align:center; font-size:.85rem; color:#aaa; margin-bottom:6px; }
+  .bar { display:flex; align-items:center; gap:8px; padding:6px 10px; background:var(--panel);
+         border-radius:8px; margin:6px 0; font-size:.95rem; }
+  .dot { width:10px; height:10px; border-radius:50%; background:#555; }
+  .bar.active .dot { background:var(--accent); box-shadow:0 0 6px var(--accent); }
+  #status { text-align:center; font-weight:bold; padding:8px; min-height:2.2em; }
+  #status.alert { color:#ff7b5c; } #status.win { color:#ffd54a; }
+  #board { display:grid; grid-template-columns:repeat(8,1fr); direction:ltr; width:100%;
+           aspect-ratio:1; border-radius:6px; overflow:hidden; box-shadow:0 4px 18px rgba(0,0,0,.5); }
+  .sq { position:relative; cursor:pointer; user-select:none; -webkit-tap-highlight-color:transparent; }
+  .sq.l { background:var(--light); } .sq.d { background:var(--dark); }
+  .sq.last::before { content:''; position:absolute; inset:0; background:rgba(255,235,60,.45); }
+  .sq.sel::before { content:''; position:absolute; inset:0; background:rgba(255,235,60,.75); }
+  .sq.check::before { content:''; position:absolute; inset:0;
+        background:radial-gradient(circle, rgba(255,0,0,.85) 0%, rgba(255,0,0,0) 70%); }
+  .sq.hint::after { content:''; position:absolute; left:35%; top:35%; width:30%; height:30%;
+        border-radius:50%; background:rgba(0,0,0,.25); z-index:3; }
+  .sq.hint.cap::after { left:4%; top:4%; width:92%; height:92%; background:none; border:5px solid rgba(0,0,0,.25); }
+  .coord { position:absolute; font-size:clamp(8px,2.2vw,12px); font-weight:bold; z-index:1; pointer-events:none; }
+  .sq.l .coord { color:var(--dark); } .sq.d .coord { color:var(--light); }
+  .coord.rank { top:2px; left:3px; } .coord.file { bottom:1px; right:3px; }
+  .pc { position:absolute; inset:4%; width:92%; height:92%; z-index:2; pointer-events:none; filter:drop-shadow(0 1px 1px rgba(0,0,0,.35)); }
+  .pc.w * { fill:#fff; stroke:#222; stroke-width:1.5; stroke-linejoin:round; }
+  .pc.b * { fill:#333; stroke:#000; stroke-width:1.5; stroke-linejoin:round; }
+  .pc.w .eye { fill:#222; stroke:none; } .pc.b .eye { fill:#fff; stroke:none; }
+  #msg { color:#ffb347; min-height:1.4em; text-align:center; font-size:.9rem; }
+  #controls { text-align:center; margin-top:6px; }
+  #history { margin-top:8px; padding:10px; background:var(--panel); border-radius:8px; font-size:.85rem;
+             color:#bbb; direction:ltr; line-height:1.8; max-height:110px; overflow-y:auto; min-height:40px; }
+</style>
+</head>
+<body>
+<h1>♞ شطرنج آنلاین</h1>
+
+<div id="lobby">
+  <p>یک کد اتاق بنویس و به دوستت بگو همان کد را وارد کند.</p>
+  <input id="roomInput" placeholder="کد اتاق (مثلاً ali123)" maxlength="30">
+  <br><button id="joinBtn">ورود به اتاق</button>
+</div>
+
+<div id="game">
+  <div id="info"></div>
+  <div class="bar" id="topBar"><span class="dot"></span><span id="topName">حریف</span></div>
+  <div id="board"></div>
+  <div class="bar" id="botBar"><span class="dot"></span><span id="botName">تو</span></div>
+  <div id="status"></div>
+  <div id="msg"></div>
+  <div id="controls">
+    <button class="red" id="resignBtn">تسلیم</button>
+    <button id="rematchBtn" style="display:none">بازی مجدد</button>
+  </div>
+  <div id="history"></div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+const socket = io();
+
+const PIECES = {
+  p: '<circle cx="22.5" cy="14" r="5.5"/><path d="M15 36c0-8 3-10 7.5-10s7.5 2 7.5 10z"/><rect x="12" y="35" width="21" height="4" rx="1.5"/>',
+  r: '<path d="M13 35V15h5v3h3v-3h3v3h3v-3h5v20z"/><rect x="11" y="35" width="23" height="4" rx="1.5"/>',
+  n: '<path d="M14 36c0-10 3-14 6-17l-4-3 3-5 6-3c7 1 11 8 11 28z"/><circle class="eye" cx="24" cy="15" r="1.6"/><rect x="11" y="35" width="23" height="4" rx="1.5"/>',
+  b: '<circle cx="22.5" cy="9" r="3"/><path d="M22.5 12c-6 4-8 9-7 14 1 4 3 6 3 10h8c0-4 2-6 3-10 1-5-1-10-7-14z"/><rect x="12" y="35" width="21" height="4" rx="1.5"/>',
+  q: '<circle cx="11" cy="16" r="2.2"/><circle cx="17" cy="11" r="2.2"/><circle cx="22.5" cy="9" r="2.2"/><circle cx="28" cy="11" r="2.2"/><circle cx="34" cy="16" r="2.2"/><path d="M11 18l6 10 5.5-15 5.5 15 6-10-3 19H14z"/><rect x="11" y="36" width="23" height="4" rx="1.5"/>',
+  k: '<rect x="21" y="4" width="3" height="9"/><rect x="18" y="7" width="9" height="3"/><path d="M22.5 14c-8 0-12 5-10 10 1 3 3 5 3 12h14c0-7 2-9 3-12 2-5-2-10-10-10z"/><rect x="11" y="36" width="23" height="4" rx="1.5"/>'
+};
+
+let myColor = null, state = null, selected = null, prevGrid = null, lastMove = new Set();
+const $ = (id) => document.getElementById(id);
+const over = () => state && ['checkmate','draw','resigned'].includes(state.status);
+
+$('joinBtn').onclick = () => { const id = $('roomInput').value.trim(); if (id) socket.emit('join', id); };
+$('roomInput').onkeydown = (e) => { if (e.key === 'Enter') $('joinBtn').click(); };
+$('resignBtn').onclick = () => { if (confirm('مطمئنی تسلیم می‌شوی؟')) socket.emit('resign'); };
+$('rematchBtn').onclick = () => socket.emit('rematch');
+
+socket.on('joined', ({ roomId, color }) => {
+  myColor = color;
+  $('lobby').style.display = 'none';
+  $('game').style.display = 'block';
+  $('info').textContent = `اتاق: ${roomId}`;
+  $('botName').textContent = `تو (${color === 'w' ? 'سفید' : 'سیاه'})`;
+  $('topName').textContent = `حریف (${color === 'w' ? 'سیاه' : 'سفید'})`;
+});
+
+socket.on('state', (s) => {
+  state = s; selected = null;
+  const grid = parseFen(s.fen);
+  if (s.history.length === 0) lastMove = new Set();
+  else if (prevGrid) {
+    const diff = new Set();
+    for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++)
+      if (prevGrid[r][c] !== grid[r][c]) diff.add('abcdefgh'[c] + (8 - r));
+    if (diff.size) lastMove = diff;
+  }
+  prevGrid = grid;
+  render();
+});
+socket.on('error_msg', (m) => { if ($('game').style.display === 'none') alert(m); else $('msg').textContent = m; });
+socket.on('opponent_left', () => { $('msg').textContent = 'حریف از بازی خارج شد.'; });
+
+function parseFen(fen) {
+  return fen.split(' ')[0].split('/').map((row) => {
+    const out = [];
+    for (const ch of row) {
+      if (/\d/.test(ch)) for (let i = 0; i < +ch; i++) out.push(null); else out.push(ch);
+    }
+    return out;
+  });
+}
+
+function render() {
+  if (!state) return;
+  const grid = parseFen(state.fen);
+  const board = $('board');
+  board.innerHTML = '';
+  const targets = selected ? state.legal.filter((m) => m.from === selected).map((m) => m.to) : [];
+
+  let kingSq = null;
+  if (state.status === 'check' || state.status === 'checkmate') {
+    const k = state.turn === 'w' ? 'K' : 'k';
+    for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++)
+      if (grid[r][c] === k) kingSq = 'abcdefgh'[c] + (8 - r);
+  }
+
+  for (let r = 0; r < 8; r++) {
+    for (let c = 0; c < 8; c++) {
+      const rr = myColor === 'b' ? 7 - r : r;
+      const cc = myColor === 'b' ? 7 - c : c;
+      const name = 'abcdefgh'[cc] + (8 - rr);
+      const piece = grid[rr][cc];
+
+      const el = document.createElement('div');
+      el.className = 'sq ' + ((rr + cc) % 2 === 0 ? 'l' : 'd');
+      if (lastMove.has(name)) el.classList.add('last');
+      if (name === selected) el.classList.add('sel');
+      if (name === kingSq) el.classList.add('check');
+      if (targets.includes(name)) { el.classList.add('hint'); if (piece) el.classList.add('cap'); }
+
+      let html = '';
+      if (c === 0) html += `<span class="coord rank">${8 - rr}</span>`;
+      if (r === 7) html += `<span class="coord file">${'abcdefgh'[cc]}</span>`;
+      if (piece) {
+        const white = piece === piece.toUpperCase();
+        html += `<svg class="pc ${white ? 'w' : 'b'}" viewBox="0 0 45 45">${PIECES[piece.toLowerCase()]}</svg>`;
+      }
+      el.innerHTML = html;
+      el.onclick = () => onSquare(name, piece);
+      board.appendChild(el);
+    }
+  }
+
+  const st = $('status');
+  st.textContent = statusText();
+  st.className = (state.status === 'check') ? 'alert' : (state.winner ? 'win' : '');
+  $('botBar').classList.toggle('active', state.started && !over() && state.turn === myColor);
+  $('topBar').classList.toggle('active', state.started && !over() && state.turn !== myColor);
+
+  let h = '';
+  state.history.forEach((m, i) => { h += (i % 2 === 0 ? `${i / 2 + 1}. ` : '') + m + ' '; });
+  $('history').textContent = h;
+  $('history').scrollTop = 99999;
+  $('rematchBtn').style.display = over() ? 'inline-block' : 'none';
+  $('resignBtn').style.display = over() ? 'none' : 'inline-block';
+  if (state.started) $('msg').textContent = '';
+}
+
+function statusText() {
+  if (!state.started) return 'منتظر حریف... کد اتاق را برای دوستت بفرست';
+  const winnerName = state.winner === 'w' ? 'سفید' : 'سیاه';
+  if (state.status === 'checkmate') return `کیش و مات! ${winnerName} برنده شد 🏆`;
+  if (state.status === 'resigned') return `تسلیم. ${winnerName} برنده شد 🏆`;
+  if (state.status === 'draw') return 'مساوی 🤝';
+  const turn = state.turn === myColor ? 'نوبت توست' : 'نوبت حریف';
+  return state.status === 'check' ? `کیش! ${turn}` : turn;
+}
+
+function onSquare(name, piece) {
+  if (!state || !state.started || over() || state.turn !== myColor) return;
+  if (selected && state.legal.some((m) => m.from === selected && m.to === name)) {
+    socket.emit('move', { from: selected, to: name, promotion: 'q' });
+    selected = null;
+    return;
+  }
+  const mine = piece && (piece === piece.toUpperCase()) === (myColor === 'w');
+  selected = mine ? name : null;
+  render();
+}
+</script>
+</body>
+</html>
